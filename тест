@@ -1,0 +1,122 @@
+using System;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Text.Json;
+using System.Threading.Tasks;
+
+class Program
+{
+    private static readonly HttpClient httpClient = new HttpClient();
+    private static string baseUrl = "https://localhost:7000/api";
+    private static string token = "";
+
+    static async Task Main(string[] args)
+    {
+        Console.WriteLine("=== Тестирование API кинотеатра ===\n");
+
+        // 1. Тестирование публичного метода
+        await TestPublicMethod();
+
+        // 2. Регистрация и авторизация
+        await TestAuthentication();
+
+        // 3. Тестирование защищенного метода
+        await TestProtectedMethod();
+
+        Console.WriteLine("\n=== Тестирование завершено ===");
+    }
+
+    static async Task TestPublicMethod()
+    {
+        Console.WriteLine("1. Тестирование публичного метода /films:");
+        
+        try
+        {
+            var response = await httpClient.GetAsync($"{baseUrl}/films");
+            Console.WriteLine($"Статус: {response.StatusCode}");
+            
+            if (response.IsSuccessStatusCode)
+            {
+                var content = await response.Content.ReadAsStringAsync();
+                Console.WriteLine("✅ Успешно получен список фильмов");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ Ошибка: {ex.Message}");
+        }
+    }
+
+    static async Task TestAuthentication()
+    {
+        Console.WriteLine("\n2. Тестирование аутентификации:");
+
+        var loginData = new { Login = "testuser", Password = "password123" };
+
+        // Сначала пробуем зарегистрироваться
+        var registerResponse = await httpClient.PostAsJsonAsync($"{baseUrl}/auth/register", loginData);
+        Console.WriteLine($"Регистрация: {registerResponse.StatusCode}");
+
+        // Затем авторизуемся
+        var loginResponse = await httpClient.PostAsJsonAsync($"{baseUrl}/auth/login", loginData);
+        
+        if (loginResponse.IsSuccessStatusCode)
+        {
+            var json = await loginResponse.Content.ReadAsStringAsync();
+            var tokenResponse = JsonSerializer.Deserialize<TokenResponse>(json, new JsonSerializerOptions 
+            { 
+                PropertyNameCaseInsensitive = true 
+            });
+            
+            token = tokenResponse.Token;
+            Console.WriteLine("✅ Авторизация успешна");
+            Console.WriteLine($"Токен: {token.Substring(0, 20)}...");
+        }
+        else
+        {
+            Console.WriteLine($"❌ Ошибка авторизации: {loginResponse.StatusCode}");
+        }
+    }
+
+    static async Task TestProtectedMethod()
+    {
+        if (string.IsNullOrEmpty(token))
+        {
+            Console.WriteLine("\n❌ Токен не получен, пропускаем тест защищенного метода");
+            return;
+        }
+
+        Console.WriteLine("\n3. Тестирование защищенного метода /profile:");
+
+        // Добавляем токен в заголовок
+        httpClient.DefaultRequestHeaders.Authorization = 
+            new AuthenticationHeaderValue("Bearer", token);
+
+        try
+        {
+            var response = await httpClient.GetAsync($"{baseUrl}/profile");
+            Console.WriteLine($"Статус: {response.StatusCode}");
+            
+            if (response.IsSuccessStatusCode)
+            {
+                var content = await response.Content.ReadAsStringAsync();
+                Console.WriteLine("✅ Успешно получен профиль пользователя");
+                Console.WriteLine($"Данные: {content}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ Ошибка: {ex.Message}");
+        }
+        finally
+        {
+            // Очищаем заголовок
+            httpClient.DefaultRequestHeaders.Authorization = null;
+        }
+    }
+}
+
+public class TokenResponse
+{
+    public string Token { get; set; }
+}
