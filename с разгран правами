@@ -1,0 +1,109 @@
+// Controllers/ProfileController.cs
+[ApiController]
+[Route("api/[controller]")]
+[Authorize]
+public class ProfileController : ControllerBase
+{
+    private readonly IAuthService _authService;
+
+    public ProfileController(IAuthService authService)
+    {
+        _authService = authService;
+    }
+
+    [HttpGet]
+    public async Task<IActionResult> GetProfile()
+    {
+        var userId = int.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value);
+        var user = await _authService.GetUserByIdAsync(userId);
+        
+        if (user == null)
+            return NotFound();
+
+        return Ok(new
+        {
+            user.Id,
+            user.Login,
+            Role = user.Role.Name
+        });
+    }
+}
+
+// Controllers/FilmsController.cs
+[ApiController]
+[Route("api/[controller]")]
+[AllowAnonymous]
+public class FilmsController : ControllerBase
+{
+    private readonly ApplicationDbContext _context;
+
+    public FilmsController(ApplicationDbContext context)
+    {
+        _context = context;
+    }
+
+    [HttpGet]
+    public async Task<IActionResult> GetFilms()
+    {
+        var films = await _context.Films.ToListAsync();
+        return Ok(films);
+    }
+}
+
+// Controllers/TicketsController.cs
+[ApiController]
+[Route("api/[controller]")]
+[Authorize]
+public class TicketsController : ControllerBase
+{
+    private readonly ApplicationDbContext _context;
+
+    public TicketsController(ApplicationDbContext context)
+    {
+        _context = context;
+    }
+
+    [HttpGet("{id}")]
+    [Authorize(Roles = "Билетер,Посетитель")]
+    public async Task<IActionResult> GetTicket(int id)
+    {
+        var userId = int.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value);
+        var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
+
+        var ticket = await _context.Tickets
+            .Include(t => t.Film)
+            .Include(t => t.User)
+            .FirstOrDefaultAsync(t => t.Id == id);
+
+        if (ticket == null)
+            return NotFound();
+
+        // Посетитель может видеть только свои билеты
+        if (userRole == "Посетитель" && ticket.UserId != userId)
+            return Forbid();
+
+        return Ok(ticket);
+    }
+}
+
+// Controllers/UsersController.cs
+[ApiController]
+[Route("api/[controller]")]
+[Authorize(Roles = "Администратор")]
+public class UsersController : ControllerBase
+{
+    private readonly ApplicationDbContext _context;
+
+    public UsersController(ApplicationDbContext context)
+    {
+        _context = context;
+    }
+
+    [HttpPost]
+    public async Task<IActionResult> CreateUser([FromBody] LoginRequest request)
+    {
+        // Логика создания пользователя администратором
+        // (можно расширить для указания роли и других данных)
+        return Ok("Пользователь создан администратором");
+    }
+}
