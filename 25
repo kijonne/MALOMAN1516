@@ -1,0 +1,535 @@
+Понял, нужно реализовать код для заданий лабораторной работы. Создам приложение Windows Forms для экспорта данных из БД в CSV и Excel.
+
+Проект Windows Forms для экспорта данных
+
+1. Основная форма (MainForm.cs)
+
+```csharp
+using System;
+using System.Data;
+using System.Linq;
+using System.Windows.Forms;
+using System.IO;
+using Microsoft.Office.Interop.Excel;
+using System.Collections.Generic;
+
+namespace LabWork25
+{
+    public partial class MainForm : Form
+    {
+        private CinemaContext context;
+        
+        public MainForm()
+        {
+            InitializeComponent();
+            context = new CinemaContext();
+            LoadData();
+        }
+
+        private void LoadData()
+        {
+            // Загрузка кинотеатров
+            var cinemas = context.Cinemas.ToList();
+            cmbCinema.DataSource = cinemas;
+            cmbCinema.DisplayMember = "Name";
+            cmbCinema.ValueMember = "Id";
+
+            // Загрузка фильмов
+            var movies = context.Movies.ToList();
+            cmbMovie.DataSource = movies;
+            cmbMovie.DisplayMember = "Title";
+            cmbMovie.ValueMember = "Id";
+
+            dtpDate.Value = DateTime.Today;
+        }
+
+        // 3.1 Экспорт в CSV для выбранного кинотеатра и даты
+        private void btnExportCsv_Click(object sender, EventArgs e)
+        {
+            var cinemaId = (int)cmbCinema.SelectedValue;
+            var date = dtpDate.Value.Date;
+
+            var schedule = context.Sessions
+                .Where(s => s.CinemaId == cinemaId && s.Date == date)
+                .OrderBy(s => s.Movie.Title)
+                .ThenBy(s => s.StartTime)
+                .Select(s => new
+                {
+                    Film = s.Movie.Title,
+                    StartTime = s.StartTime,
+                    Hall = s.Hall.Name,
+                    Price = s.Price
+                })
+                .ToList();
+
+            SaveToCsv(schedule, $"Schedule_{cmbCinema.Text}_{date:yyyyMMdd}.csv");
+        }
+
+        // 3.2 Экспорт в XLSX с разными листами для кинотеатров
+        private void btnExportXlsx_Click(object sender, EventArgs e)
+        {
+            var date = dtpDate.Value.Date;
+            ExportToExcelMultipleSheets(date);
+        }
+
+        // 3.3 Экспорт в XLSX по шаблону для выбранного фильма
+        private void btnExportTemplate_Click(object sender, EventArgs e)
+        {
+            var movieId = (int)cmbMovie.SelectedValue;
+            var date = dtpDate.Value.Date;
+            ExportToExcelWithTemplate(movieId, date);
+        }
+
+        // 3.4 Сохранение в разных форматах
+        private void btnExportHtml_Click(object sender, EventArgs e)
+        {
+            var date = dtpDate.Value.Date;
+            ExportToHtml(date);
+        }
+
+        private void SaveToCsv<T>(List<T> data, string filename)
+        {
+            using (var saveDialog = new SaveFileDialog())
+            {
+                saveDialog.Filter = "CSV files (*.csv)|*.csv";
+                saveDialog.FileName = filename;
+                
+                if (saveDialog.ShowDialog() == DialogResult.OK)
+                {
+                    using (var writer = new StreamWriter(saveDialog.FileName))
+                    {
+                        // Заголовки
+                        var properties = typeof(T).GetProperties();
+                        writer.WriteLine(string.Join(";", properties.Select(p => p.Name)));
+                        
+                        // Данные
+                        foreach (var item in data)
+                        {
+                            var line = string.Join(";", properties.Select(p => p.GetValue(item)?.ToString() ?? ""));
+                            writer.WriteLine(line);
+                        }
+                    }
+                    MessageBox.Show("Данные успешно экспортированы в CSV!");
+                }
+            }
+        }
+
+        private void ExportToExcelMultipleSheets(DateTime date)
+        {
+            using (var saveDialog = new SaveFileDialog())
+            {
+                saveDialog.Filter = "Excel files (*.xlsx)|*.xlsx";
+                saveDialog.FileName = $"Schedule_All_Cinemas_{date:yyyyMMdd}.xlsx";
+                
+                if (saveDialog.ShowDialog() == DialogResult.OK)
+                {
+                    var excelApp = new Application();
+                    var workbook = excelApp.Workbooks.Add();
+                    
+                    var cinemas = context.Cinemas.ToList();
+                    
+                    foreach (var cinema in cinemas)
+                    {
+                        var worksheet = workbook.Worksheets.Add();
+                        worksheet.Name = cinema.Name;
+                        
+                        // Заголовки
+                        worksheet.Cells[1, 1] = "Название фильма";
+                        worksheet.Cells[1, 2] = "Время начала";
+                        worksheet.Cells[1, 3] = "Зал";
+                        worksheet.Cells[1, 4] = "Цена";
+                        
+                        var sessions = context.Sessions
+                            .Where(s => s.CinemaId == cinema.Id && s.Date == date)
+                            .OrderBy(s => s.Movie.Title)
+                            .ThenBy(s => s.StartTime)
+                            .ToList();
+                        
+                        int row = 2;
+                        foreach (var session in sessions)
+                        {
+                            worksheet.Cells[row, 1] = session.Movie.Title;
+                            worksheet.Cells[row, 2] = session.StartTime.ToString("HH:mm");
+                            worksheet.Cells[row, 3] = session.Hall.Name;
+                            worksheet.Cells[row, 4] = session.Price;
+                            row++;
+                        }
+                        
+                        // Авто-ширина колонок
+                        worksheet.Columns.AutoFit();
+                    }
+                    
+                    // Удалить пустой лист по умолчанию
+                    workbook.Worksheets[1].Delete();
+                    
+                    workbook.SaveAs(saveDialog.FileName);
+                    workbook.Close();
+                    excelApp.Quit();
+                    
+                    MessageBox.Show("Данные успешно экспортированы в Excel!");
+                }
+            }
+        }
+
+        private void ExportToExcelWithTemplate(int movieId, DateTime date)
+        {
+            using (var saveDialog = new SaveFileDialog())
+            {
+                saveDialog.Filter = "Excel files (*.xlsx)|*.xlsx";
+                saveDialog.FileName = $"Movie_Schedule_{date:yyyyMMdd}.xlsx";
+                
+                if (saveDialog.ShowDialog() == DialogResult.OK)
+                {
+                    var excelApp = new Application();
+                    var workbook = excelApp.Workbooks.Add();
+                    var worksheet = workbook.Worksheets[1];
+                    worksheet.Name = "Расписание фильма";
+                    
+                    // Заголовки по шаблону
+                    worksheet.Cells[1, 1] = "Название фильма";
+                    worksheet.Cells[1, 2] = "Дата сеанса";
+                    worksheet.Cells[1, 3] = "Кинотеатр";
+                    worksheet.Cells[1, 4] = "Время начала";
+                    worksheet.Cells[1, 5] = "Время окончания";
+                    worksheet.Cells[1, 6] = "Зал";
+                    worksheet.Cells[1, 7] = "Цена";
+                    
+                    var sessions = context.Sessions
+                        .Where(s => s.MovieId == movieId && s.Date == date)
+                        .OrderBy(s => s.Cinema.Name)
+                        .ThenBy(s => s.StartTime)
+                        .ToList();
+                    
+                    int row = 2;
+                    string currentCinema = "";
+                    
+                    foreach (var session in sessions)
+                    {
+                        if (session.Cinema.Name != currentCinema)
+                        {
+                            // Добавляем заголовок группы кинотеатров
+                            worksheet.Cells[row, 3] = $"Кинотеатр: {session.Cinema.Name}";
+                            worksheet.Cells[row, 3].Font.Bold = true;
+                            row++;
+                            currentCinema = session.Cinema.Name;
+                        }
+                        
+                        worksheet.Cells[row, 1] = session.Movie.Title;
+                        worksheet.Cells[row, 2] = session.Date.ToString("dd.MM.yyyy");
+                        worksheet.Cells[row, 3] = session.Cinema.Name;
+                        worksheet.Cells[row, 4] = session.StartTime.ToString("HH:mm");
+                        worksheet.Cells[row, 5] = session.EndTime.ToString("HH:mm");
+                        worksheet.Cells[row, 6] = session.Hall.Name;
+                        worksheet.Cells[row, 7] = session.Price;
+                        row++;
+                    }
+                    
+                    worksheet.Columns.AutoFit();
+                    workbook.SaveAs(saveDialog.FileName);
+                    workbook.Close();
+                    excelApp.Quit();
+                    
+                    MessageBox.Show("Данные успешно экспортированы по шаблону!");
+                }
+            }
+        }
+
+        private void ExportToHtml(DateTime date)
+        {
+            using (var saveDialog = new SaveFileDialog())
+            {
+                saveDialog.Filter = "HTML files (*.html)|*.html";
+                saveDialog.FileName = $"Schedule_{date:yyyyMMdd}.html";
+                
+                if (saveDialog.ShowDialog() == DialogResult.OK)
+                {
+                    var sessions = context.Sessions
+                        .Where(s => s.Date == date)
+                        .OrderBy(s => s.Cinema.Name)
+                        .ThenBy(s => s.Movie.Title)
+                        .ThenBy(s => s.StartTime)
+                        .ToList();
+                    
+                    using (var writer = new StreamWriter(saveDialog.FileName))
+                    {
+                        writer.WriteLine("<!DOCTYPE html>");
+                        writer.WriteLine("<html>");
+                        writer.WriteLine("<head>");
+                        writer.WriteLine("<meta charset='utf-8'>");
+                        writer.WriteLine("<title>Расписание сеансов</title>");
+                        writer.WriteLine("<style>");
+                        writer.WriteLine("table { border-collapse: collapse; width: 100%; }");
+                        writer.WriteLine("th, td { border: 1px solid black; padding: 8px; text-align: left; }");
+                        writer.WriteLine("th { background-color: #f2f2f2; }");
+                        writer.WriteLine("</style>");
+                        writer.WriteLine("</head>");
+                        writer.WriteLine("<body>");
+                        writer.WriteLine($"<h1>Расписание сеансов на {date:dd.MM.yyyy}</h1>");
+                        writer.WriteLine("<table>");
+                        writer.WriteLine("<tr><th>Кинотеатр</th><th>Фильм</th><th>Время</th><th>Зал</th><th>Цена</th></tr>");
+                        
+                        foreach (var session in sessions)
+                        {
+                            writer.WriteLine("<tr>");
+                            writer.WriteLine($"<td>{session.Cinema.Name}</td>");
+                            writer.WriteLine($"<td>{session.Movie.Title}</td>");
+                            writer.WriteLine($"<td>{session.StartTime:HH:mm}</td>");
+                            writer.WriteLine($"<td>{session.Hall.Name}</td>");
+                            writer.WriteLine($"<td>{session.Price} руб.</td>");
+                            writer.WriteLine("</tr>");
+                        }
+                        
+                        writer.WriteLine("</table>");
+                        writer.WriteLine("</body>");
+                        writer.WriteLine("</html>");
+                    }
+                    
+                    MessageBox.Show("Данные успешно экспортированы в HTML!");
+                }
+            }
+        }
+    }
+}
+```
+
+2. Модели данных (CinemaContext.cs)
+
+```csharp
+using System.Data.Entity;
+using System.ComponentModel.DataAnnotations;
+
+namespace LabWork25
+{
+    public class CinemaContext : DbContext
+    {
+        public CinemaContext() : base("name=CinemaConnection") { }
+        
+        public DbSet<Cinema> Cinemas { get; set; }
+        public DbSet<Movie> Movies { get; set; }
+        public DbSet<Hall> Halls { get; set; }
+        public DbSet<Session> Sessions { get; set; }
+    }
+
+    public class Cinema
+    {
+        public int Id { get; set; }
+        public string Name { get; set; }
+        public string Address { get; set; }
+        public virtual ICollection<Hall> Halls { get; set; }
+        public virtual ICollection<Session> Sessions { get; set; }
+    }
+
+    public class Movie
+    {
+        public int Id { get; set; }
+        public string Title { get; set; }
+        public int Duration { get; set; } // в минутах
+        public virtual ICollection<Session> Sessions { get; set; }
+    }
+
+    public class Hall
+    {
+        public int Id { get; set; }
+        public string Name { get; set; }
+        public int Capacity { get; set; }
+        public int CinemaId { get; set; }
+        public virtual Cinema Cinema { get; set; }
+        public virtual ICollection<Session> Sessions { get; set; }
+    }
+
+    public class Session
+    {
+        public int Id { get; set; }
+        public int MovieId { get; set; }
+        public int CinemaId { get; set; }
+        public int HallId { get; set; }
+        public System.DateTime Date { get; set; }
+        public System.TimeSpan StartTime { get; set; }
+        public System.TimeSpan EndTime { get; set; }
+        public decimal Price { get; set; }
+        
+        public virtual Movie Movie { get; set; }
+        public virtual Cinema Cinema { get; set; }
+        public virtual Hall Hall { get; set; }
+    }
+}
+```
+
+3. Файл конфигурации (App.config)
+
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <configSections>
+    <section name="entityFramework" 
+             type="System.Data.Entity.Internal.ConfigFile.EntityFrameworkSection, EntityFramework, Version=6.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089" 
+             requirePermission="false" />
+  </configSections>
+  
+  <connectionStrings>
+    <add name="CinemaConnection" 
+         connectionString="Data Source=(localdb)\mssqllocaldb;Initial Catalog=CinemaDB;Integrated Security=true" 
+         providerName="System.Data.SqlClient" />
+  </connectionStrings>
+  
+  <entityFramework>
+    <defaultConnectionFactory type="System.Data.Entity.Infrastructure.LocalDbConnectionFactory, EntityFramework">
+      <parameters>
+        <parameter value="mssqllocaldb" />
+      </parameters>
+    </defaultConnectionFactory>
+    <providers>
+      <provider invariantName="System.Data.SqlClient" 
+                type="System.Data.Entity.SqlServer.SqlProviderServices, EntityFramework.SqlServer" />
+    </providers>
+  </entityFramework>
+</configuration>
+```
+
+4. Дизайн формы (MainForm.Designer.cs)
+
+```csharp
+partial class MainForm
+{
+    private System.ComponentModel.IContainer components = null;
+    private ComboBox cmbCinema;
+    private ComboBox cmbMovie;
+    private DateTimePicker dtpDate;
+    private Button btnExportCsv;
+    private Button btnExportXlsx;
+    private Button btnExportTemplate;
+    private Button btnExportHtml;
+    private Label label1;
+    private Label label2;
+    private Label label3;
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing && (components != null))
+        {
+            components.Dispose();
+        }
+        base.Dispose(disposing);
+    }
+
+    private void InitializeComponent()
+    {
+        this.cmbCinema = new ComboBox();
+        this.cmbMovie = new ComboBox();
+        this.dtpDate = new DateTimePicker();
+        this.btnExportCsv = new Button();
+        this.btnExportXlsx = new Button();
+        this.btnExportTemplate = new Button();
+        this.btnExportHtml = new Button();
+        this.label1 = new Label();
+        this.label2 = new Label();
+        this.label3 = new Label();
+        
+        SuspendLayout();
+        
+        // label1 - Кинотеатр
+        this.label1.Location = new System.Drawing.Point(20, 20);
+        this.label1.Size = new System.Drawing.Size(100, 20);
+        this.label1.Text = "Кинотеатр:";
+        
+        // cmbCinema
+        this.cmbCinema.Location = new System.Drawing.Point(120, 20);
+        this.cmbCinema.Size = new System.Drawing.Size(200, 21);
+        this.cmbCinema.DropDownStyle = ComboBoxStyle.DropDownList;
+        
+        // label2 - Фильм
+        this.label2.Location = new System.Drawing.Point(20, 60);
+        this.label2.Size = new System.Drawing.Size(100, 20);
+        this.label2.Text = "Фильм:";
+        
+        // cmbMovie
+        this.cmbMovie.Location = new System.Drawing.Point(120, 60);
+        this.cmbMovie.Size = new System.Drawing.Size(200, 21);
+        this.cmbMovie.DropDownStyle = ComboBoxStyle.DropDownList;
+        
+        // label3 - Дата
+        this.label3.Location = new System.Drawing.Point(20, 100);
+        this.label3.Size = new System.Drawing.Size(100, 20);
+        this.label3.Text = "Дата:";
+        
+        // dtpDate
+        this.dtpDate.Location = new System.Drawing.Point(120, 100);
+        this.dtpDate.Size = new System.Drawing.Size(200, 20);
+        this.dtpDate.Format = DateTimePickerFormat.Short;
+        
+        // btnExportCsv
+        this.btnExportCsv.Location = new System.Drawing.Point(20, 150);
+        this.btnExportCsv.Size = new System.Drawing.Size(300, 30);
+        this.btnExportCsv.Text = "Экспорт в CSV (задание 3.1)";
+        this.btnExportCsv.Click += new EventHandler(btnExportCsv_Click);
+        
+        // btnExportXlsx
+        this.btnExportXlsx.Location = new System.Drawing.Point(20, 190);
+        this.btnExportXlsx.Size = new System.Drawing.Size(300, 30);
+        this.btnExportXlsx.Text = "Экспорт в XLSX (задание 3.2)";
+        this.btnExportXlsx.Click += new EventHandler(btnExportXlsx_Click);
+        
+        // btnExportTemplate
+        this.btnExportTemplate.Location = new System.Drawing.Point(20, 230);
+        this.btnExportTemplate.Size = new System.Drawing.Size(300, 30);
+        this.btnExportTemplate.Text = "Экспорт по шаблону (задание 3.3)";
+        this.btnExportTemplate.Click += new EventHandler(btnExportTemplate_Click);
+        
+        // btnExportHtml
+        this.btnExportHtml.Location = new System.Drawing.Point(20, 270);
+        this.btnExportHtml.Size = new System.Drawing.Size(300, 30);
+        this.btnExportHtml.Text = "Экспорт в HTML (задание 3.4)";
+        this.btnExportHtml.Click += new EventHandler(btnExportHtml_Click);
+        
+        // MainForm
+        this.ClientSize = new System.Drawing.Size(350, 320);
+        this.Text = "Экспорт данных из БД - Лабораторная 25";
+        this.Controls.AddRange(new Control[] {
+            this.label1, this.cmbCinema,
+            this.label2, this.cmbMovie,
+            this.label3, this.dtpDate,
+            this.btnExportCsv, this.btnExportXlsx,
+            this.btnExportTemplate, this.btnExportHtml
+        });
+        
+        ResumeLayout(false);
+    }
+}
+```
+
+5. Program.cs
+
+```csharp
+using System;
+using System.Windows.Forms;
+
+namespace LabWork25
+{
+    internal static class Program
+    {
+        [STAThread]
+        static void Main()
+        {
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+            Application.Run(new MainForm());
+        }
+    }
+}
+```
+
+Необходимые NuGet пакеты:
+
+```xml
+<PackageReference Include="EntityFramework" Version="6.4.4" />
+<PackageReference Include="Microsoft.Office.Interop.Excel" Version="15.0.4795.1000" />
+```
+
+Этот код полностью реализует все задания лабораторной работы:
+
+· 3.1 - Экспорт в CSV для выбранного кинотеатра
+· 3.2 - Экспорт в XLSX с разными листами для кинотеатров
+· 3.3 - Экспорт в XLSX по шаблону для выбранного фильма
+· 3.4 - Экспорт в XLSX и HTML форматах
+
+Приложение использует Entity Framework для работы с базой данных и Microsoft Office Interop для экспорта в Excel.
