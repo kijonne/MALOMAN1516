@@ -1,0 +1,431 @@
+Я помогу вам реализовать приложение для импорта данных согласно заданиям лабораторной работы. Вот полное решение:
+
+Проект LabWork23
+
+1. Модели данных
+
+```csharp
+// LW23Games.cs
+public class LW23Games
+{
+    public int GameId { get; set; }
+    public string Name { get; set; }
+    public string? LogoFile { get; set; }
+}
+
+// LW23Screenshots.cs
+public class LW23Screenshots
+{
+    public int ScreenshotId { get; set; }
+    public int GameId { get; set; }
+    public string FileName { get; set; }
+    public byte[] Photo { get; set; }
+    public LW23Games Game { get; set; }
+}
+
+// LW23Users.cs
+public class LW23Users
+{
+    public int UserId { get; set; }
+    public string Name { get; set; }
+    public string Email { get; set; }
+    public DateTime RegistrationDate { get; set; }
+}
+
+// LW23Posts.cs
+public class LW23Posts
+{
+    public int PostId { get; set; }
+    public int UserId { get; set; }
+    public string Title { get; set; }
+    public List<LW23Comments> Comments { get; set; } = new();
+}
+
+// LW23Comments.cs
+public class LW23Comments
+{
+    public int CommentId { get; set; }
+    public int PostId { get; set; }
+    public string Text { get; set; }
+    public LW23Posts Post { get; set; }
+}
+
+// LW23Ingredients.cs
+public class LW23Ingredients
+{
+    public int IdIngredient { get; set; }
+    public string Name { get; set; }
+    public List<LW23PizzaIngredients> PizzaIngredients { get; set; } = new();
+}
+
+// LW23Pizzas.cs
+public class LW23Pizzas
+{
+    public int IdPizza { get; set; }
+    public string Name { get; set; }
+    public decimal Weight { get; set; }
+    public decimal Price { get; set; }
+    public List<LW23PizzaIngredients> PizzaIngredients { get; set; } = new();
+}
+
+// LW23PizzaIngredients.cs
+public class LW23PizzaIngredients
+{
+    public int IdPizza { get; set; }
+    public int IdIngredient { get; set; }
+    public LW23Pizzas Pizza { get; set; }
+    public LW23Ingredients Ingredient { get; set; }
+}
+```
+
+2. Контекст базы данных
+
+```csharp
+// AppDbContext.cs
+using Microsoft.EntityFrameworkCore;
+
+public class AppDbContext : DbContext
+{
+    public DbSet<LW23Games> LW23Games { get; set; }
+    public DbSet<LW23Screenshots> LW23Screenshots { get; set; }
+    public DbSet<LW23Users> LW23Users { get; set; }
+    public DbSet<LW23Posts> LW23Posts { get; set; }
+    public DbSet<LW23Comments> LW23Comments { get; set; }
+    public DbSet<LW23Ingredients> LW23Ingredients { get; set; }
+    public DbSet<LW23Pizzas> LW23Pizzas { get; set; }
+    public DbSet<LW23PizzaIngredients> LW23PizzaIngredients { get; set; }
+
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+    {
+        optionsBuilder.UseSqlServer(@"Server=(localdb)\mssqllocaldb;Database=LabWork23;Trusted_Connection=true;");
+    }
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        // Настройка связи для пицц и ингредиентов (M:M)
+        modelBuilder.Entity<LW23PizzaIngredients>()
+            .HasKey(pi => new { pi.IdPizza, pi.IdIngredient });
+
+        modelBuilder.Entity<LW23PizzaIngredients>()
+            .HasOne(pi => pi.Pizza)
+            .WithMany(p => p.PizzaIngredients)
+            .HasForeignKey(pi => pi.IdPizza);
+
+        modelBuilder.Entity<LW23PizzaIngredients>()
+            .HasOne(pi => pi.Ingredient)
+            .WithMany(i => i.PizzaIngredients)
+            .HasForeignKey(pi => pi.IdIngredient);
+    }
+}
+```
+
+3. Главная форма приложения
+
+```csharp
+// MainForm.cs
+using System.Text.Json;
+using System.Text.RegularExpressions;
+
+public partial class MainForm : Form
+{
+    private AppDbContext context;
+    private string basePath;
+
+    public MainForm()
+    {
+        InitializeComponent();
+        context = new AppDbContext();
+        basePath = AppDomain.CurrentDomain.BaseDirectory;
+        
+        // Создание папки для логотипов
+        string gamesLogoPath = Path.Combine(basePath, "GamesLogo");
+        if (!Directory.Exists(gamesLogoPath))
+            Directory.CreateDirectory(gamesLogoPath);
+    }
+
+    // 3.1 Импорт логотипов игр
+    private void btnImportLogo_Click(object sender, EventArgs e)
+    {
+        try
+        {
+            var openFileDialog = new OpenFileDialog();
+            openFileDialog.Filter = "Image Files|*.jpg;*.jpeg;*.png;*.bmp";
+
+            if (openFileDialog.ShowDialog() == DialogResult.OK)
+            {
+                string sourceFile = openFileDialog.FileName;
+                string fileName = Path.GetFileName(sourceFile);
+                string destFile = Path.Combine(basePath, "GamesLogo", fileName);
+
+                // Копируем файл
+                File.Copy(sourceFile, destFile, true);
+
+                // Сохраняем в БД
+                var game = new LW23Games 
+                { 
+                    Name = txtGameName.Text, 
+                    LogoFile = fileName 
+                };
+                context.LW23Games.Add(game);
+                context.SaveChanges();
+
+                MessageBox.Show("Логотип успешно импортирован!");
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Ошибка: {ex.Message}");
+        }
+    }
+
+    // 3.2 Импорт скриншотов в БД
+    private void btnImportScreenshot_Click(object sender, EventArgs e)
+    {
+        try
+        {
+            var openFileDialog = new OpenFileDialog();
+            openFileDialog.Filter = "Image Files|*.jpg;*.jpeg;*.png;*.bmp";
+
+            if (openFileDialog.ShowDialog() == DialogResult.OK)
+            {
+                string filePath = openFileDialog.FileName;
+                byte[] fileBytes = File.ReadAllBytes(filePath);
+
+                // Проверка размера файла (2 МБ)
+                if (fileBytes.Length > 2 * 1024 * 1024)
+                {
+                    MessageBox.Show("Файл слишком большой! Максимальный размер - 2 МБ.");
+                    return;
+                }
+
+                var screenshot = new LW23Screenshots
+                {
+                    GameId = int.Parse(txtGameId.Text),
+                    FileName = Path.GetFileName(filePath),
+                    Photo = fileBytes
+                };
+                context.LW23Screenshots.Add(screenshot);
+                context.SaveChanges();
+
+                MessageBox.Show("Скриншот успешно импортирован в БД!");
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Ошибка: {ex.Message}");
+        }
+    }
+
+    // 3.3 Импорт из CSV
+    private void btnImportCSV_Click(object sender, EventArgs e)
+    {
+        try
+        {
+            string filePath = Path.Combine(basePath, "Import", "users.csv");
+            string[] lines = File.ReadAllLines(filePath);
+
+            foreach (string line in lines.Skip(1)) // Пропускаем заголовок
+            {
+                string[] fields = line.Split(',');
+
+                // Преобразование даты
+                string dateString = fields[2];
+                string pattern = @"(\d{2})/(\d{2})/(\d{4})";
+                string replacement = "$2.$1.$3";
+                string newDateString = Regex.Replace(dateString, pattern, replacement);
+                DateTime registrationDate = DateTime.Parse(newDateString);
+
+                var user = new LW23Users
+                {
+                    Name = fields[0],
+                    Email = fields[1],
+                    RegistrationDate = registrationDate
+                };
+                context.LW23Users.Add(user);
+            }
+            context.SaveChanges();
+            MessageBox.Show("Данные из CSV успешно импортированы!");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Ошибка: {ex.Message}");
+        }
+    }
+
+    // 3.4 Импорт из JSON
+    private void btnImportJSON_Click(object sender, EventArgs e)
+    {
+        try
+        {
+            string filePath = Path.Combine(basePath, "Import", "comments.json");
+            string jsonString = File.ReadAllText(filePath);
+
+            var users = JsonSerializer.Deserialize<List<UserJson>>(jsonString);
+
+            foreach (var user in users)
+            {
+                foreach (var post in user.Posts)
+                {
+                    var dbPost = new LW23Posts
+                    {
+                        UserId = user.UserId,
+                        Title = post.Title
+                    };
+                    context.LW23Posts.Add(dbPost);
+                    context.SaveChanges(); // Сохраняем чтобы получить PostId
+
+                    foreach (var comment in post.Comments)
+                    {
+                        var dbComment = new LW23Comments
+                        {
+                            PostId = dbPost.PostId,
+                            Text = comment.Text
+                        };
+                        context.LW23Comments.Add(dbComment);
+                    }
+                }
+            }
+            context.SaveChanges();
+            MessageBox.Show("Данные из JSON успешно импортированы!");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Ошибка: {ex.Message}");
+        }
+    }
+
+    // 3.5 Импорт пицц и ингредиентов
+    private void btnImportPizza_Click(object sender, EventArgs e)
+    {
+        try
+        {
+            // Добавляем базовые ингредиенты
+            var ingredients = new List<LW23Ingredients>
+            {
+                new() { Name = "томатный соус" },
+                new() { Name = "сыр" },
+                new() { Name = "помидоры" }
+            };
+            context.LW23Ingredients.AddRange(ingredients);
+            context.SaveChanges();
+
+            // Импорт пицц
+            string filePath = Path.Combine(basePath, "Import", "PizzaIngredients.csv");
+            string[] lines = File.ReadAllLines(filePath);
+
+            foreach (string line in lines.Skip(1)) // Пропускаем заголовок
+            {
+                string[] fields = line.Split(',');
+
+                var pizza = new LW23Pizzas
+                {
+                    Name = fields[0],
+                    Weight = decimal.Parse(fields[1]),
+                    Price = decimal.Parse(fields[2])
+                };
+                context.LW23Pizzas.Add(pizza);
+                context.SaveChanges();
+
+                // Обработка ингредиентов
+                string ingredientsStr = fields[3];
+                var pizzaIngredients = ingredientsStr.Split(';');
+
+                foreach (string ingName in pizzaIngredients)
+                {
+                    var ingredient = context.LW23Ingredients
+                        .FirstOrDefault(i => i.Name == ingName.Trim());
+
+                    if (ingredient != null)
+                    {
+                        var pizzaIngredient = new LW23PizzaIngredients
+                        {
+                            IdPizza = pizza.IdPizza,
+                            IdIngredient = ingredient.IdIngredient
+                        };
+                        context.LW23PizzaIngredients.Add(pizzaIngredient);
+                    }
+                }
+            }
+            context.SaveChanges();
+            MessageBox.Show("Данные о пиццах успешно импортированы!");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Ошибка: {ex.Message}");
+        }
+    }
+}
+
+// Вспомогательные классы для десериализации JSON
+public class UserJson
+{
+    public int UserId { get; set; }
+    public List<PostJson> Posts { get; set; }
+}
+
+public class PostJson
+{
+    public string Title { get; set; }
+    public List<CommentJson> Comments { get; set; }
+}
+
+public class CommentJson
+{
+    public string Text { get; set; }
+}
+```
+
+4. SQL скрипты
+
+```sql
+-- Games.sql
+CREATE TABLE LW23Games (
+    GameId INT IDENTITY(1,1) PRIMARY KEY,
+    Name NVARCHAR(100) NOT NULL,
+    LogoFile NVARCHAR(120) NULL
+);
+
+-- Создание остальных таблиц через миграции EF Core
+```
+
+5. Ответы на контрольные вопросы
+
+6.1 Как выполнить импорт из csv-файла в БД через приложение?
+
+· Читаем файл построчно с помощью File.ReadAllLines()
+· Разбиваем каждую строку на поля с помощью Split()
+· Преобразуем данные в объекты модели
+· Сохраняем в БД через DbContext
+
+6.2 Как импортировать изображение в БД через приложение?
+
+· Читаем файл в массив байтов с помощью File.ReadAllBytes()
+· Проверяем размер файла
+· Сохраняем массив байтов в поле типа varbinary(MAX)
+· Сохраняем объект в БД через DbContext
+
+6.3 Как выполнить импорт файла JSON в БД через приложение?
+
+· Читаем весь файл в строку с помощью File.ReadAllText()
+· Десериализуем JSON в объекты с помощью JsonSerializer.Deserialize()
+· Преобразуем объекты в модели БД
+· Сохраняем в БД через DbContext с учетом связей между таблицами
+
+6. Установка и запуск
+
+1. Создайте новый проект Windows Forms
+2. Установите NuGet пакеты:
+   ```
+   Microsoft.EntityFrameworkCore
+   Microsoft.EntityFrameworkCore.SqlServer
+   Microsoft.EntityFrameworkCore.Tools
+   ```
+3. Добавьте файлы моделей, контекста и формы
+4. Выполните миграции:
+   ```
+   Add-Migration InitialCreate
+   Update-Database
+   ```
+5. Запустите приложение
+
+Это полное решение всех заданий лабораторной работы, включая импорт данных из различных форматов и работу с изображениями.
