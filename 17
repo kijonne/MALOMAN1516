@@ -1,0 +1,226 @@
+Я подготовил для вас пошаговое выполнение заданий из лабораторной работы №17 по разграничению прав доступа в веб-приложении ASP.NET Core.
+
+---
+
+✅ Задание 5.1 – Создание веб-приложения
+
+5.1.1. Создать проект «Веб-приложение ASP.NET Core»
+
+```bash
+dotnet new webapp -n CinemaApp
+cd CinemaApp
+```
+
+5.1.2. Добавить контекст БД и модели
+
+Создайте папки Models, Data.
+Добавьте модели (например, Film, Ticket, User).
+Пример модели User:
+
+```csharp
+// Models/User.cs
+public class User
+{
+    public int Id { get; set; }
+    public string Login { get; set; }
+    public string Password { get; set; }
+    public string Role { get; set; } // "Администратор", "Билетер", "Гость"
+}
+```
+
+5.1.3. Создать папки Films и Tickets с Razor-страницами CRUD
+
+```bash
+dotnet aspnet-codegenerator razorpage -m Film -dc ApplicationDbContext -udl -outDir Pages/Films --referenceScriptLibraries
+dotnet aspnet-codegenerator razorpage -m Ticket -dc ApplicationDbContext -udl -outDir Pages/Tickets --referenceScriptLibraries
+```
+
+5.1.4. Изменить меню в _Layout.cshtml:
+
+```html
+<li class="nav-item">
+    <a class="nav-link text-dark" asp-page="/Films/Index">Фильмы</a>
+</li>
+<li class="nav-item">
+    <a class="nav-link text-dark" asp-page="/Tickets/Index">Билеты</a>
+</li>
+```
+
+---
+
+✅ Задание 5.2 – Добавление окна авторизации
+
+5.2.1. Создать страницу Login.cshtml:
+
+```bash
+dotnet aspnet-codegenerator razorpage -m User -dc ApplicationDbContext -udl -outDir Pages --referenceScriptLibraries
+```
+
+Переименуйте в Login.cshtml и упростите форму.
+
+5.2.2. Модифицировать разметку Login.cshtml:
+
+```html
+<form method="post" asp-page-handler="Login">
+    <input asp-for="User.Login" />
+    <input asp-for="User.Password" type="password" />
+    <button type="submit">Войти</button>
+</form>
+
+<form method="post" asp-page-handler="Guest">
+    <button type="submit">Войти как гость</button>
+</form>
+```
+
+5.2.3. Добавить обработчики в Login.cshtml.cs:
+
+```csharp
+public async Task<IActionResult> OnPostLoginAsync()
+{
+    // Проверка пользователя
+    // Если найден — сохранить в сессии
+    return RedirectToPage("/Films/Index");
+}
+
+public IActionResult OnPostGuest()
+{
+    HttpContext.Session.SetString("Role", "Гость");
+    return RedirectToPage("/Films/Index");
+}
+```
+
+---
+
+✅ Задание 5.3 – Работа с сессиями
+
+5.3.1. Добавить поддержку сессий в Program.cs:
+
+```csharp
+builder.Services.AddSession();
+builder.Services.AddHttpContextAccessor();
+...
+app.UseSession();
+```
+
+5.3.2–5.3.4. Реализовать логику входа и выхода:
+
+```csharp
+// В методе OnPostGuest
+HttpContext.Session.SetString("Role", "Гость");
+
+// В методе OnPostLogin
+var user = await _context.Users.FirstOrDefaultAsync(u => u.Login == User.Login);
+if (user != null && user.Password == User.Password)
+{
+    HttpContext.Session.SetString("Role", user.Role);
+    HttpContext.Session.SetString("Login", user.Login);
+    return RedirectToPage("/Films/Index");
+}
+
+// Выход
+public IActionResult OnGetLogout()
+{
+    HttpContext.Session.Clear();
+    return RedirectToPage("/Index");
+}
+```
+
+5.3.5. Изменить меню в _Layout.cshtml:
+
+```html
+@{
+    var login = Context.Session.GetString("Login");
+    var role = Context.Session.GetString("Role");
+}
+
+@if (!string.IsNullOrEmpty(login))
+{
+    <span>@login (@role)</span>
+    <a asp-page="/Login" asp-page-handler="logout">Выйти</a>
+}
+else
+{
+    <a asp-page="/Login">Войти</a>
+}
+```
+
+---
+
+✅ Задание 5.4 – Разграничение прав доступа
+
+5.4.1–5.4.3. Создать AuthPageModel.cs:
+
+```csharp
+public class AuthPageModel : PageModel
+{
+    public string UserRole => HttpContext.Session.GetString("Role");
+    public bool IsAdmin => UserRole == "Администратор";
+    public bool IsTicketier => UserRole == "Билетер";
+
+    protected IActionResult HasRole()
+    {
+        if (string.IsNullOrEmpty(UserRole))
+            return RedirectToPage("/Login");
+        return null;
+    }
+
+    protected IActionResult IsInRole(string role)
+    {
+        if (UserRole != role)
+            return RedirectToPage("/Login");
+        return null;
+    }
+
+    protected IActionResult CanEdit()
+    {
+        if (!IsAdmin)
+            return RedirectToPage("/Login");
+        return null;
+    }
+}
+```
+
+5.4.4–5.4.5. Использовать в страницах:
+
+```csharp
+public class TicketsIndexModel : AuthPageModel
+{
+    public async Task<IActionResult> OnGetAsync()
+    {
+        if (HasRole() is IActionResult result) return result;
+        // Только администратор и билетер
+        if (!IsAdmin && !IsTicketier) return RedirectToPage("/Login");
+        return Page();
+    }
+}
+```
+
+---
+
+✅ Задание 5.5 – Изменение разметки в зависимости от роли
+
+В Pages/Films/Index.cshtml:
+
+```html
+@if (Model.IsAdmin)
+{
+    <a asp-page="./Edit" asp-route-id="@item.Id">Редактировать</a>
+}
+```
+
+---
+
+📌 Ответы на контрольные вопросы (для отчета):
+
+1. Сессия — это способ хранения данных о пользователе между запросами на сервере.
+2. Куки — небольшие текстовые данные, хранящиеся на клиенте, передаются с каждым запросом.
+3. Срок жизни сессии — по умолчанию 20 минут, можно настроить. Куки могут иметь срок истечения.
+4. Добавление поддержки сессий:
+   ```csharp
+   builder.Services.AddSession();
+   app.UseSession();
+   ```
+
+---
+
+Если хотите, я могу подготовить готовый проект в виде архива или отдельные файлы кода для каждого пункта. Нужно ли это?
