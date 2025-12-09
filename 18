@@ -1,0 +1,219 @@
+На основе предоставленного описания лабораторной работы, выполним задания из пункта 5.
+Ниже приведено пошаговое выполнение в рамках проекта ASP.NET Core (с использованием Razor Pages или MVC).
+
+---
+
+📌 5.1 Русификация интерфейса
+
+5.1.1 Русификация подписей модели
+
+Добавляем аннотации [Display] к свойствам моделей Сеанс и Посетитель:
+
+```csharp
+public class Сеанс
+{
+    [Display(Name = "Название фильма")]
+    public string FilmName { get; set; }
+
+    [Display(Name = "Дата и время")]
+    public DateTime StartTime { get; set; }
+
+    [Display(Name = "Зал")]
+    public int HallId { get; set; }
+    
+    public virtual Hall? Hall { get; set; }
+}
+
+public class Посетитель
+{
+    [Display(Name = "ФИО")]
+    public string FullName { get; set; }
+
+    [Display(Name = "Email")]
+    public string Email { get; set; }
+}
+```
+
+---
+
+5.1.2 Русификация кнопок и ссылок
+
+В файлах .cshtml заменяем подписи на русские:
+
+```html
+<input type="submit" value="Сохранить" class="btn btn-primary" />
+
+<a asp-page="./Index">Назад к списку</a>
+```
+
+Можно использовать Ctrl+H в редакторе для массовой замены.
+
+---
+
+📌 5.2 Отображение данных связанных таблиц
+
+5.2.1 Добавление вспомогательных свойств
+
+В модель Зал добавляем свойство только для чтения:
+
+```csharp
+public class Hall
+{
+    public int Id { get; set; }
+    public string Number { get; set; }
+    public int CinemaId { get; set; }
+    public virtual Cinema? Cinema { get; set; }
+
+    [Display(Name = "Кинотеатр и зал")]
+    public string CinemaAndNumber => $"{Cinema?.Name} - Зал {Number}";
+}
+```
+
+---
+
+5.2.2 Отображение данных на страницах просмотра
+
+В Index.cshtml для сеансов:
+
+```razor
+@foreach (var item in Model.SeansList)
+{
+    <tr>
+        <td>@item.FilmName</td>
+        <td>@item.Hall?.CinemaAndNumber</td>
+        <td>@item.StartTime.ToString("dd.MM.yyyy HH:mm")</td>
+    </tr>
+}
+```
+
+---
+
+5.2.3 Отображение данных в выпадающих списках
+
+В Create.cshtml.cs или Edit.cshtml.cs:
+
+```csharp
+public async Task<IActionResult> OnGetAsync()
+{
+    ViewData["HallId"] = new SelectList(_context.Halls.Include(h => h.Cinema), 
+                                         "Id", 
+                                         "CinemaAndNumber");
+    return Page();
+}
+```
+
+---
+
+📌 5.3 Настройка навигационных свойств для валидации
+
+Делаем навигационные свойства необязательными:
+
+```csharp
+public class Сеанс
+{
+    public int Id { get; set; }
+    public int HallId { get; set; }
+    public virtual Hall? Hall { get; set; }  // <- добавлен ?
+}
+```
+
+В обработчике OnPost:
+
+```csharp
+public async Task<IActionResult> OnPostAsync()
+{
+    ModelState.Remove("Сеанс.Hall");
+    
+    if (!ModelState.IsValid)
+    {
+        return Page();
+    }
+    
+    // сохранение данных
+}
+```
+
+---
+
+📌 5.4 Настройка элементов для редактирования данных
+
+5.4.1 Смена локали
+
+В Program.cs:
+
+```csharp
+var culture = new CultureInfo("ru-RU");
+culture.NumberFormat.NumberDecimalSeparator = ".";
+CultureInfo.DefaultThreadCurrentCulture = culture;
+CultureInfo.DefaultThreadCurrentUICulture = culture;
+```
+
+---
+
+5.4.2 Смена стиля отображения элементов
+
+В модели:
+
+```csharp
+[DataType(DataType.Currency)]
+[Display(Name = "Цена билета")]
+public decimal Price { get; set; }
+
+[DataType(DataType.MultilineText)]
+[Display(Name = "Описание")]
+public string Description { get; set; }
+```
+
+В .cshtml:
+
+```html
+<input asp-for="StartTime" type="date" class="form-control" />
+<input asp-for="Password" type="password" class="form-control" />
+```
+
+---
+
+📌 5.5 Настройка аннотаций валидации
+
+Добавляем аннотации с русскими сообщениями:
+
+```csharp
+[Required(ErrorMessage = "Поле обязательно для заполнения")]
+[StringLength(100, MinimumLength = 3, 
+              ErrorMessage = "Длина {0} должна быть от {2} до {1} символов")]
+public string FilmName { get; set; }
+
+[Range(0.01, 10000.00, ErrorMessage = "Цена должна быть от {1} до {2}")]
+public decimal Price { get; set; }
+
+[EmailAddress(ErrorMessage = "Некорректный email адрес")]
+public string Email { get; set; }
+
+[Phone(ErrorMessage = "Некорректный номер телефона")]
+public string Phone { get; set; }
+```
+
+---
+
+✅ 6. Порядок выполнения работы
+
+1. Выполнить все задания из п.5 (как описано выше).
+2. Ответить на контрольные вопросы (см. ниже).
+
+---
+
+❓ 8. Контрольные вопросы (краткие ответы)
+
+8.1 — Использовать аннотацию [Display(Name = "...")] у свойств модели.
+
+8.2 — Через вспомогательные свойства в модели и SelectList в контроллере.
+
+8.3 — Через ErrorMessage в аннотациях валидации.
+
+8.4 — Required, StringLength, Range, RegularExpression, EmailAddress, Phone.
+
+8.5 — Проверка введённых данных на соответствие заданным правилам до сохранения.
+
+---
+
+Если нужно, я могу подготовить готовые файлы моделей, представлений и контроллеров для этого проекта.
