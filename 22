@@ -1,0 +1,351 @@
+Я помогу вам выполнить задания по импорту данных в SQL Server. Приведу скрипты для каждого этапа:
+
+3.1 Импорт данных с использованием мастера импорта
+
+3.1.1 Импорт из Excel (после преобразования в .xls)
+
+```sql
+-- Создание таблицы для импорта
+CREATE TABLE Import1_Pizzaflesources (
+    id INT PRIMARY KEY,
+    название NVARCHAR(100),
+    тип NVARCHAR(50),
+    цена DECIMAL(10,2),
+    описание NVARCHAR(255),
+    доступно BIT
+);
+-- Используйте SSMS Master Import для импорта данных
+```
+
+3.1.2 Импорт из users.csv
+
+```sql
+-- Создание временной таблицы
+CREATE TABLE Import1_users_temp (
+    user_id INT,
+    имя NVARCHAR(50),
+    фамилия NVARCHAR(50),
+    email NVARCHAR(100),
+    дата_регистрации NVARCHAR(50),
+    статус NVARCHAR(20)
+);
+
+-- После импорта преобразование даты
+CREATE TABLE Import1_users (
+    user_id INT PRIMARY KEY,
+    имя NVARCHAR(50),
+    фамилия NVARCHAR(50),
+    email NVARCHAR(100),
+    дата_регистрации DATE,
+    статус NVARCHAR(20)
+);
+
+INSERT INTO Import1_users 
+SELECT 
+    user_id,
+    имя,
+    фамилия,
+    email,
+    CASE 
+        WHEN CHARINDEX(',', дата_регистрации) > 0 THEN
+            FORMAT(TRY_CONVERT(DATE, дата_регистрации, 101), 'dd.MM.yyyy')
+        ELSE
+            TRY_CONVERT(DATE, дата_регистрации)
+    END AS дата_регистрации,
+    статус
+FROM Import1_users_temp;
+```
+
+3.2 Импорт и разделение данных связи M:M
+
+3.2.1 Импорт из Pizzaflegredients.csv
+
+```sql
+CREATE TABLE Import2_Pizzaflegredients (
+    id INT PRIMARY KEY,
+    название_пиццы NVARCHAR(100),
+    ингредиенты NVARCHAR(MAX),
+    офис NVARCHAR(100)
+);
+```
+
+3.2.2 Разделение ингредиентов
+
+```sql
+-- Таблица уникальных ингредиентов
+CREATE TABLE Import2_Ингредиенты (
+    ingredient_id INT IDENTITY(1,1) PRIMARY KEY,
+    название NVARCHAR(100) UNIQUE
+);
+
+-- Вставка уникальных ингредиентов
+INSERT INTO Import2_Ингредиенты (название)
+SELECT DISTINCT LTRIM(RTRIM(value)) 
+FROM Import2_Pizzaflegredients
+CROSS APPLY STRING_SPLIT(ингредиенты, ',');
+```
+
+3.2.3 Таблица офисов
+
+```sql
+CREATE TABLE Import2_Офисы (
+    office_id INT IDENTITY(1,1) PRIMARY KEY,
+    название NVARCHAR(100) UNIQUE
+);
+
+INSERT INTO Import2_Офисы (название)
+SELECT DISTINCT офис 
+FROM Import2_Pizzaflegredients 
+WHERE офис IS NOT NULL;
+```
+
+3.2.4 Таблица состава
+
+```sql
+CREATE TABLE Import2_Состав (
+    состав_id INT IDENTITY(1,1) PRIMARY KEY,
+    пицца_id INT,
+    ingredient_id INT,
+    FOREIGN KEY (ingredient_id) REFERENCES Import2_Ингредиенты(ingredient_id)
+);
+
+-- Заполнение таблицы состава
+INSERT INTO Import2_Состав (пицца_id, ingredient_id)
+SELECT 
+    p.id,
+    i.ingredient_id
+FROM Import2_Pizzaflegredients p
+CROSS APPLY STRING_SPLIT(p.ингредиенты, ',') ing
+JOIN Import2_Ингредиенты i ON LTRIM(RTRIM(ing.value)) = i.название;
+```
+
+3.3 Импорт данных из XML-файла
+
+3.3.1 Импорт из XML
+
+```sql
+-- Создание временной таблицы для XML
+CREATE TABLE Import3_userRoles_temp (
+    data XML
+);
+
+-- После импорта XML разбор данных
+DECLARE @xml XML;
+SELECT @xml = data FROM Import3_userRoles_temp;
+
+-- Создание таблицы для пользователей
+CREATE TABLE Import3_Users (
+    user_id INT PRIMARY KEY,
+    username NVARCHAR(50),
+    email NVARCHAR(100)
+);
+
+-- Создание таблицы для ролей
+CREATE TABLE Import3_Roles (
+    role_id INT IDENTITY(1,1) PRIMARY KEY,
+    role_name NVARCHAR(50) UNIQUE
+);
+
+-- Создание таблицы связи пользователей и ролей
+CREATE TABLE Import3_UserRoles (
+    user_role_id INT IDENTITY(1,1) PRIMARY KEY,
+    user_id INT,
+    role_id INT,
+    FOREIGN KEY (user_id) REFERENCES Import3_Users(user_id),
+    FOREIGN KEY (role_id) REFERENCES Import3_Roles(role_id)
+);
+
+-- Разбор XML и вставка данных
+INSERT INTO Import3_Users (user_id, username, email)
+SELECT 
+    x.value('(id)[1]', 'INT'),
+    x.value('(username)[1]', 'NVARCHAR(50)'),
+    x.value('(email)[1]', 'NVARCHAR(100)')
+FROM @xml.nodes('/users/user') AS T(x);
+
+INSERT INTO Import3_Roles (role_name)
+SELECT DISTINCT
+    x.value('(role)[1]', 'NVARCHAR(50)')
+FROM @xml.nodes('/users/user') AS T(x);
+
+-- Заполнение связи
+INSERT INTO Import3_UserRoles (user_id, role_id)
+SELECT 
+    u.user_id,
+    r.role_id
+FROM @xml.nodes('/users/user') AS T(x)
+JOIN Import3_Users u ON u.user_id = x.value('(id)[1]', 'INT')
+JOIN Import3_Roles r ON r.role_name = x.value('(role)[1]', 'NVARCHAR(50)');
+```
+
+3.4 Импорт данных из JSON-файла
+
+3.4.1 Импорт posts.json
+
+```sql
+-- Создание таблицы для постов
+CREATE TABLE Import4_Posts (
+    post_id INT PRIMARY KEY,
+    user_id INT,
+    title NVARCHAR(255),
+    body NVARCHAR(MAX),
+    created_at DATETIME
+);
+
+-- Импорт из JSON
+DECLARE @json_posts NVARCHAR(MAX);
+
+-- Загрузить JSON из файла
+SELECT @json_posts = BulkColumn
+FROM OPENROWSET(BULK 'C:\path\to\posts.json', SINGLE_CLOB) as j;
+
+INSERT INTO Import4_Posts (post_id, user_id, title, body, created_at)
+SELECT 
+    postId,
+    userId,
+    title,
+    body,
+    TRY_CONVERT(DATETIME, posted)
+FROM OPENJSON(@json_posts)
+WITH (
+    postId INT '$.id',
+    userId INT '$.userId',
+    title NVARCHAR(255) '$.title',
+    body NVARCHAR(MAX) '$.body',
+    posted NVARCHAR(50) '$.posted'
+);
+```
+
+3.4.2 Импорт comments.json
+
+```sql
+-- Временная таблица для комментариев
+CREATE TABLE Import4_Comments_temp (
+    comment_id INT,
+    post_id INT,
+    user_id INT,
+    comment_text NVARCHAR(MAX),
+    posted_date NVARCHAR(50)
+);
+
+-- Импорт и разделение комментариев
+DECLARE @json_comments NVARCHAR(MAX);
+
+SELECT @json_comments = BulkColumn
+FROM OPENROWSET(BULK 'C:\path\to\comments.json', SINGLE_CLOB) as j;
+
+INSERT INTO Import4_Comments_temp
+SELECT 
+    commentId,
+    postId,
+    userId,
+    comment,
+    posted
+FROM OPENJSON(@json_comments)
+WITH (
+    commentId INT '$.id',
+    postId INT '$.postId',
+    userId INT '$.userId',
+    comment NVARCHAR(MAX) '$.comment',
+    posted NVARCHAR(50) '$.posted'
+);
+
+-- Разделение комментариев (каждый в отдельной строке)
+SELECT 
+    user_id,
+    posted_date,
+    value AS comment
+FROM Import4_Comments_temp
+CROSS APPLY STRING_SPLIT(comment_text, '.')
+WHERE value IS NOT NULL AND LTRIM(RTRIM(value)) != '';
+```
+
+3.4.3 Создание таблиц Post и Comment
+
+```sql
+-- Таблица постов (1:M с комментариями)
+CREATE TABLE Import4_Post (
+    PostID INT IDENTITY(1,1) PRIMARY KEY,
+    UserID INT,
+    Title NVARCHAR(255),
+    Content NVARCHAR(MAX),
+    CreatedDate DATETIME
+);
+
+-- Таблица комментариев
+CREATE TABLE Import4_Comment (
+    CommentID INT IDENTITY(1,1) PRIMARY KEY,
+    PostID INT,
+    UserID INT,
+    CommentText NVARCHAR(MAX),
+    CreatedDate DATETIME,
+    FOREIGN KEY (PostID) REFERENCES Import4_Post(PostID)
+);
+```
+
+3.5 Генерация и импорт данных
+
+3.5.1 Генерация данных пользователей (шаблон для Mockaroo)
+
+```sql
+CREATE TABLE Import5_Users (
+    id INT PRIMARY KEY,
+    имя NVARCHAR(50),
+    фамилия NVARCHAR(50),
+    email NVARCHAR(100),
+    пароль NVARCHAR(100),
+    пол NVARCHAR(10),
+    аватар NVARCHAR(255),
+    дата_рождения DATE
+);
+
+-- После генерации на Mockaroo с настройками:
+-- 100 строк
+-- Пароль: от 6 символов
+-- Аватар: 30% NULL
+-- Дата рождения: 50% NULL, диапазон 01.01.1900 - текущая дата
+```
+
+3.5.2 Генерация тематических данных (шаблон)
+
+```sql
+CREATE TABLE Import5_ThematicData1 (
+    id INT PRIMARY KEY,
+    название NVARCHAR(100),
+    категория NVARCHAR(50),
+    цена DECIMAL(10,2),
+    количество INT,
+    дата_добавления DATE,
+    рейтинг DECIMAL(3,2)
+);
+-- 50 строк, минимум 5 столбцов
+```
+
+3.5.3 Генерация данных на русском языке (шаблон)
+
+```sql
+CREATE TABLE Import5_RussianData (
+    id INT PRIMARY KEY,
+    наименование_товара NVARCHAR(100),
+    категория NVARCHAR(50),
+    производитель NVARCHAR(100),
+    цена_руб DECIMAL(10,2),
+    наличие_на_складе INT,
+    дата_поступления DATE
+);
+-- 10 строк на русском языке
+```
+
+Важные примечания:
+
+1. Первичные ключи добавлены во все таблицы
+2. Внешние ключи настроены для связей между таблицами
+3. Типы данных соответствуют содержанию столбцов
+4. NULL значения разрешены там, где это указано в требованиях
+5. Для выполнения импорта используйте SQL Server Management Studio:
+   · Правой кнопкой на БД → Tasks → Import Data
+   · Выберите источник данных (Excel, CSV, XML, JSON)
+   · Настройте маппинг столбцов
+   · Сохраните скрипты при выполнении
+
+Хотите, чтобы я подробнее описал какой-либо конкретный шаг или помог с настройкой типов данных для определенных столбцов?
