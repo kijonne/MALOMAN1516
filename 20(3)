@@ -1,52 +1,63 @@
-5.3 WPF приложение (простая версия)
-
-MainWindow.xaml
-
-```xml
-<Window x:Class="WpfApp.MainWindow"
-        Title="Добавить кадр" Height="200" Width="300">
-    <StackPanel Margin="10">
-        <Label>Выберите фильм:</Label>
-        <ComboBox x:Name="comboFilms"/>
-        <Button Content="Добавить кадр" 
-                Click="AddFrame_Click" 
-                Margin="0,20,0,0"/>
-    </StackPanel>
-</Window>
-```
-
-MainWindow.xaml.cs
-
-```csharp
 using System;
 using System.IO;
+using System.Linq;
 using System.Windows;
 using Microsoft.Win32;
+using DataLayer;
+using DataLayer.Models;
 
 public partial class MainWindow : Window
 {
+    private AppDbContext _db;
+    
     public MainWindow()
     {
         InitializeComponent();
-        // Заполняем комбобокс (заглушка)
-        comboFilms.Items.Add("Фильм 1");
-        comboFilms.Items.Add("Фильм 2");
-        comboFilms.SelectedIndex = 0;
+        
+        // Подключаемся к БД
+        _db = new AppDbContext();
+        
+        // Загружаем фильмы из БД
+        LoadFilms();
     }
-
+    
+    private void LoadFilms()
+    {
+        try
+        {
+            // Берем все фильмы из таблицы Films
+            var films = _db.Films.ToList();
+            comboFilms.ItemsSource = films;
+            
+            if (films.Any())
+                comboFilms.SelectedIndex = 0;
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Ошибка загрузки фильмов: {ex.Message}");
+        }
+    }
+    
     private void AddFrame_Click(object sender, RoutedEventArgs e)
     {
-        // 1. Открываем диалог выбора файла
+        // 1. Проверяем выбран ли фильм
+        if (comboFilms.SelectedItem == null)
+        {
+            MessageBox.Show("Выберите фильм!");
+            return;
+        }
+        
+        // 2. Открываем диалог выбора файла
         var dialog = new OpenFileDialog
         {
-            Filter = "Картинки|*.jpg;*.png;*.bmp"
+            Filter = "Картинки|*.jpg;*.png;*.bmp|Все файлы|*.*"
         };
-
+        
         if (dialog.ShowDialog() == true)
         {
             string filePath = dialog.FileName;
             
-            // 2. Проверяем размер (не более 2 МБ)
+            // 3. Проверяем размер (не более 2 МБ)
             long fileSize = new FileInfo(filePath).Length;
             if (fileSize > 2 * 1024 * 1024)
             {
@@ -54,7 +65,7 @@ public partial class MainWindow : Window
                 return;
             }
             
-            // 3. Копируем в папку images
+            // 4. Копируем в папку images рядом с программой
             string exeDir = AppDomain.CurrentDomain.BaseDirectory;
             string imagesDir = Path.Combine(exeDir, "images");
             
@@ -67,23 +78,12 @@ public partial class MainWindow : Window
             try
             {
                 File.Copy(filePath, destPath, true);
-                MessageBox.Show($"Файл сохранен:\n{destPath}");
+                MessageBox.Show($"Файл сохранен в:\n{destPath}");
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Ошибка: {ex.Message}");
+                MessageBox.Show($"Ошибка копирования: {ex.Message}");
             }
         }
     }
 }
-```
-
-Что делает:
-
-1. Выбираем фильм из списка (заглушка)
-2. Нажимаем кнопку → открывается диалог выбора файла
-3. Если файл > 2 МБ → ошибка
-4. Файл копируется в папку images рядом с программой
-5. Если папки нет → создается
-
-Никакой БД, никаких сложностей.
