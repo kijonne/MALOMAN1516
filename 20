@@ -1,0 +1,229 @@
+Хорошо, перед тем как приступить к выполнению заданий, я опишу структуру проекта и пошагово разберу каждый пункт.
+
+---
+
+5.1 Подготовка БД и структуры проекта
+
+5.1.1 Таблицы в БД (SQL-пример для SQL Server)
+
+```sql
+CREATE TABLE Фильмы (
+    Идентификатор INT PRIMARY KEY IDENTITY,
+    Название NVARCHAR(200) NOT NULL
+);
+
+CREATE TABLE Кадры (
+    Идентификатор INT PRIMARY KEY IDENTITY,
+    ИдФильма INT NOT NULL,
+    НазваниеФайла NVARCHAR(200),
+    ДанныеФайла VARBINARY(MAX),
+    FOREIGN KEY (ИдФильма) REFERENCES Фильмы(Идентификатор)
+);
+```
+
+5.1.2 Структура решения в Visual Studio
+
+· Решение: Lab20_FileUploadSolution
+· Проект 1: DataLayer (библиотека классов)
+  · Модели: Film, Frame
+  · Контекст БД: AppDbContext (использует Entity Framework Core)
+· Проект 2: WpfApp (WPF приложение)
+· Проект 3: WebApp (Razor Pages)
+
+---
+
+5.2 Загрузка файла на веб-сервер (в папку)
+
+5.2.1 CRUD-страницы для моделей
+
+Используем Scaffolding в ASP.NET Core для генерации CRUD-страниц для Frame и Film.
+
+5.2.2 Папка wwwroot/images
+
+Создаётся автоматически при первом сохранении, если её нет.
+
+5.2.3 Страница добавления кадра
+
+В Create.cshtml:
+
+```html
+<form method="post" enctype="multipart/form-data">
+    <div class="form-group">
+        <label asp-for="Frame.ИдФильма">Фильм</label>
+        <select asp-for="Frame.ИдФильма" asp-items="Model.Films" class="form-control"></select>
+    </div>
+    <div class="form-group">
+        <label>Изображение</label>
+        <input type="file" name="photo" accept="image/*" />
+    </div>
+    <button type="submit">Добавить</button>
+</form>
+```
+
+5.2.4 Код сохранения файла (в Create.cshtml.cs)
+
+```csharp
+public async Task<IActionResult> OnPostAsync(IFormFile photo)
+{
+    if (photo?.Length > 0)
+    {
+        var path = Path.Combine(Directory.GetCurrentDirectory(), 
+                                "wwwroot", "images", photo.FileName);
+        using var stream = new FileStream(path, FileMode.Create);
+        await photo.CopyToAsync(stream);
+        Frame.НазваниеФайла = photo.FileName;
+    }
+    _context.Frames.Add(Frame);
+    await _context.SaveChangesAsync();
+    return RedirectToPage("./Index");
+}
+```
+
+5.2.5 Проверка размера файла (2 МБ)
+
+```csharp
+if (photo.Length > 2 * 1024 * 1024)
+{
+    ModelState.AddModelError("", "Файл слишком большой (макс. 2 МБ).");
+    return Page();
+}
+```
+
+---
+
+5.3 Загрузка файла в папку оконного приложения
+
+5.3.1 Окно WPF
+
+· ComboBox для выбора фильма
+· Button "Добавить кадр"
+
+5.3.2 Открытие файла
+
+```csharp
+private void AddFrame_Click(object sender, RoutedEventArgs e)
+{
+    var dialog = new Microsoft.Win32.OpenFileDialog
+    {
+        Filter = "Images (*.jpg;*.png;*.bmp)|*.jpg;*.png;*.bmp"
+    };
+    if (dialog.ShowDialog() == true)
+    {
+        // обработка файла
+    }
+}
+```
+
+5.3.3 Копирование в папку images
+
+```csharp
+string appDir = AppDomain.CurrentDomain.BaseDirectory;
+string imagesDir = Path.Combine(appDir, "images");
+Directory.CreateDirectory(imagesDir);
+string destPath = Path.Combine(imagesDir, Path.GetFileName(dialog.FileName));
+File.Copy(dialog.FileName, destPath, true);
+```
+
+5.3.4 Проверка размера
+
+```csharp
+FileInfo fileInfo = new FileInfo(dialog.FileName);
+if (fileInfo.Length > 2 * 1024 * 1024)
+{
+    MessageBox.Show("Файл слишком большой (макс. 2 МБ).");
+    return;
+}
+```
+
+---
+
+5.4 Загрузка файла в БД через веб-приложение
+
+5.4.1 Форма редактирования фильма
+
+Добавляем поле для файла.
+
+5.4.2 Сохранение в БД (в Edit.cshtml.cs)
+
+```csharp
+public async Task<IActionResult> OnPostAsync(IFormFile photo)
+{
+    if (photo?.Length > 0)
+    {
+        using var memoryStream = new MemoryStream();
+        await photo.CopyToAsync(memoryStream);
+        Film.ДанныеФайла = memoryStream.ToArray();
+    }
+    // обновление записи в БД
+}
+```
+
+5.4.3 Проверка (3 МБ)
+
+```csharp
+if (photo.Length > 3 * 1024 * 1024)
+{
+    ModelState.AddModelError("", "Файл слишком большой (макс. 3 МБ).");
+    return Page();
+}
+```
+
+---
+
+5.5 Загрузка файла в БД через оконное приложение
+
+5.5.1 Кнопка "Выбрать постер"
+
+Аналогично 5.3.2.
+
+5.5.2 Открытие файла
+
+Тот же диалог выбора.
+
+5.5.3 Копирование в БД
+
+```csharp
+byte[] fileBytes = File.ReadAllBytes(dialog.FileName);
+// сохранить fileBytes в поле ДанныеФайла таблицы Кадры через EF Core
+```
+
+5.5.4 Проверка (3 МБ)
+
+```csharp
+if (new FileInfo(dialog.FileName).Length > 3 * 1024 * 1024)
+{
+    MessageBox.Show("Файл слишком большой (макс. 3 МБ).");
+    return;
+}
+```
+
+---
+
+6 Порядок выполнения работы
+
+1. Создать БД и таблицы.
+2. Собрать решение с тремя проектами.
+3. Реализовать загрузку в папку через веб (5.2).
+4. Реализовать загрузку в папку через WPF (5.3).
+5. Реализовать загрузку в БД через веб (5.4).
+6. Реализовать загрузку в БД через WPF (5.5).
+7. Протестировать все сценарии.
+
+---
+
+Ответы на контрольные вопросы (8)
+
+1. byte[] vs string:
+   byte[] хранит бинарные данные (изображения, PDF и т.д.), string — текст в кодировке UTF-16. Для файлов в БД используют VARBINARY(MAX) (для byte[]) или NVARCHAR(MAX) (для base64-строки).
+2. Получить IFormFile в веб-приложении:
+   Через параметр метода: public async Task<IActionResult> OnPost(IFormFile file) или через HttpContext.Request.Form.Files.
+3. Передать файл в оконном приложении:
+   Использовать OpenFileDialog, затем File.ReadAllBytes() или File.Copy().
+4. MemoryStream:
+   Поток в памяти, используется для временного хранения бинарных данных (например, перед сохранением в БД).
+5. Сохранить файл в папку, а путь в БД:
+   Сохраняем файл в папку (wwwroot/images), записываем путь (photo.FileName) в поле НазваниеФайла таблицы.
+
+---
+
+Если нужны полные коды проектов (.cs, .xaml, .cshtml), могу подготовить архив с решением.
