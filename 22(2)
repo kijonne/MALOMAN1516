@@ -1,0 +1,290 @@
+Для выполнения лабораторной работы по импорту данных в SQL Server, я подготовлю SQL-скрипты для каждого задания. Поскольку у вас уже есть все необходимые файлы, вот пошаговое решение:
+
+---
+
+3.1 Импорт данных с использованием мастера импорта
+
+3.1.1 Импорт из PizzaResources.xlsx (предварительно пересохранить в .xls)
+
+```sql
+-- Создание таблиц для импорта PizzaResources.xls
+CREATE TABLE Import1_Promocodes (
+    IdPromocode INT PRIMARY KEY,
+    Name NVARCHAR(50),
+    Percent INT
+);
+
+CREATE TABLE Import1_Pizza (
+    IdPizza INT PRIMARY KEY,
+    Name NVARCHAR(100),
+    Ingredients NVARCHAR(MAX),
+    Weight INT,
+    Price DECIMAL(10,2)
+);
+
+CREATE TABLE Import1_Orders (
+    IdOrder INT PRIMARY KEY,
+    DateOfOrder DATETIME,
+    IdPromocode INT NULL
+);
+
+CREATE TABLE Import1_OrderList (
+    IdOrder INT,
+    IdPizza INT,
+    Quantity INT,
+    PRIMARY KEY (IdOrder, IdPizza)
+);
+```
+
+После создания таблиц используйте SQL Server Import and Export Wizard для импорта данных из каждого листа Excel.
+
+---
+
+3.1.2 Импорт из users.csv
+
+```sql
+CREATE TABLE Import1_Users (
+    id INT PRIMARY KEY,
+    name NVARCHAR(100),
+    login NVARCHAR(50),
+    password NVARCHAR(100),
+    ip NVARCHAR(15),
+    lastenter NVARCHAR(50) -- Будем преобразовывать
+);
+
+-- Импорт через мастер, затем преобразование даты
+UPDATE Import1_Users 
+SET lastenter = 
+    CASE 
+        WHEN CHARINDEX('/', lastenter) > 0 THEN 
+            FORMAT(TRY_CONVERT(DATE, lastenter, 101), 'dd.MM.yyyy')
+        ELSE 
+            lastenter
+    END;
+
+-- Изменяем тип столбца на DATE
+ALTER TABLE Import1_Users 
+ALTER COLUMN lastenter DATE;
+```
+
+---
+
+3.2 Импорт и разделение данных связи M:M
+
+3.2.1 Импорт PizzaIngredients.csv
+
+```sql
+CREATE TABLE Import2_PizzaIngredients (
+    IdPizza INT PRIMARY KEY,
+    Name NVARCHAR(100),
+    Ingredients NVARCHAR(MAX),
+    Mass INT,
+    Price DECIMAL(10,2)
+);
+
+-- Импорт через мастер
+```
+
+3.2.2 Таблица ингредиентов без дубликатов
+
+```sql
+CREATE TABLE Import2_Ingredients (
+    IngredientID INT IDENTITY(1,1) PRIMARY KEY,
+    IngredientName NVARCHAR(100) UNIQUE
+);
+
+INSERT INTO Import2_Ingredients (IngredientName)
+SELECT DISTINCT TRIM(value) AS Ingredient
+FROM Import2_PizzaIngredients
+CROSS APPLY STRING_SPLIT(Ingredients, ',');
+```
+
+3.2.3 Таблица пицц
+
+```sql
+CREATE TABLE Import2_Pizza (
+    IdPizza INT PRIMARY KEY,
+    Name NVARCHAR(100),
+    Mass INT,
+    Price DECIMAL(10,2)
+);
+
+INSERT INTO Import2_Pizza (IdPizza, Name, Mass, Price)
+SELECT IdPizza, Name, Mass, Price
+FROM Import2_PizzaIngredients;
+```
+
+3.2.4 Таблица состава (M:M)
+
+```sql
+CREATE TABLE Import2_Composition (
+    PizzaID INT,
+    IngredientID INT,
+    PRIMARY KEY (PizzaID, IngredientID),
+    FOREIGN KEY (PizzaID) REFERENCES Import2_Pizza(IdPizza),
+    FOREIGN KEY (IngredientID) REFERENCES Import2_Ingredients(IngredientID)
+);
+
+INSERT INTO Import2_Composition (PizzaID, IngredientID)
+SELECT 
+    p.IdPizza,
+    i.IngredientID
+FROM Import2_PizzaIngredients p
+CROSS APPLY STRING_SPLIT(p.Ingredients, ',') s
+JOIN Import2_Ingredients i ON TRIM(s.value) = i.IngredientName;
+```
+
+---
+
+3.3 Импорт данных из XML-файла
+
+3.3.1 Импорт userRoles.xml
+
+```sql
+CREATE TABLE Import3_UserRolesXML (
+    ID INT IDENTITY(1,1) PRIMARY KEY,
+    XMLData XML
+);
+
+-- Загрузить XML через мастер или BULK INSERT
+```
+
+3.3.2 Разделение на Role и User
+
+```sql
+CREATE TABLE Import3_Roles (
+    RoleID INT IDENTITY(1,1) PRIMARY KEY,
+    RoleName NVARCHAR(50)
+);
+
+CREATE TABLE Import3_Users (
+    UserID INT IDENTITY(1,1) PRIMARY KEY,
+    RoleID INT,
+    iduser INT,
+    login NVARCHAR(50),
+    password NVARCHAR(100),
+    FOREIGN KEY (RoleID) REFERENCES Import3_Roles(RoleID)
+);
+
+-- Вставка ролей
+INSERT INTO Import3_Roles (RoleName)
+SELECT DISTINCT 
+    x.value('@name', 'NVARCHAR(50)') AS RoleName
+FROM Import3_UserRolesXML
+CROSS APPLY XMLData.nodes('/Users/Role') AS t(x);
+
+-- Вставка пользователей
+INSERT INTO Import3_Users (RoleID, iduser, login, password)
+SELECT 
+    r.RoleID,
+    u.value('(iduser)[1]', 'INT') AS iduser,
+    u.value('(login)[1]', 'NVARCHAR(50)') AS login,
+    u.value('(password)[1]', 'NVARCHAR(100)') AS password
+FROM Import3_UserRolesXML
+CROSS APPLY XMLData.nodes('/Users/Role') AS t(x)
+CROSS APPLY x.nodes('User') AS s(u)
+JOIN Import3_Roles r ON x.value('@name', 'NVARCHAR(50)') = r.RoleName;
+```
+
+---
+
+3.4 Импорт данных из JSON-файла
+
+3.4.1 Импорт users.json
+
+```sql
+CREATE TABLE Import4_UsersJSON (
+    id INT PRIMARY KEY,
+    name NVARCHAR(100),
+    username NVARCHAR(50),
+    email NVARCHAR(100),
+    phone NVARCHAR(50),
+    website NVARCHAR(100)
+);
+
+-- Загрузка JSON через OPENJSON
+DECLARE @json NVARCHAR(MAX);
+SELECT @json = BulkColumn
+FROM OPENROWSET(BULK 'C:\путь\к\users.json', SINGLE_CLOB) AS j;
+
+INSERT INTO Import4_UsersJSON (id, name, username, email, phone, website)
+SELECT 
+    id,
+    name,
+    username,
+    email,
+    phone,
+    website
+FROM OPENJSON(@json)
+WITH (
+    id INT '$.id',
+    name NVARCHAR(100) '$.name',
+    username NVARCHAR(50) '$.username',
+    email NVARCHAR(100) '$.email',
+    phone NVARCHAR(50) '$.phone',
+    website NVARCHAR(100) '$.website'
+);
+```
+
+---
+
+3.5 Генерация и импорт данных
+
+3.5.1 Пользователи с Mockaroo
+
+```sql
+CREATE TABLE Import5_Users (
+    ID INT PRIMARY KEY,
+    FirstName NVARCHAR(50),
+    LastName NVARCHAR(50),
+    Email NVARCHAR(100),
+    Password NVARCHAR(100),
+    Gender NVARCHAR(10),
+    Avatar NVARCHAR(255) NULL,
+    BirthDate DATE NULL
+);
+```
+
+Импортируйте CSV из Mockaroo через мастер.
+
+---
+
+3.5.2 Набор данных на тематику (Mockaroo + AI)
+
+```sql
+CREATE TABLE Import5_Products (
+    ProductID INT PRIMARY KEY,
+    ProductName NVARCHAR(100),
+    Category NVARCHAR(50),
+    Price DECIMAL(10,2),
+    Stock INT,
+    CreatedDate DATE
+);
+```
+
+---
+
+3.5.3 Набор данных на русском языке (Phind AI)
+
+```sql
+CREATE TABLE Import5_RussianBooks (
+    BookID INT PRIMARY KEY,
+    Title NVARCHAR(200),
+    Author NVARCHAR(100),
+    YearPublished INT,
+    Genre NVARCHAR(50),
+    Pages INT
+);
+```
+
+---
+
+Краткий итог:
+
+1. Import1_* — импорт из Excel и CSV
+2. Import2_* — разделение ингредиентов пиццы
+3. Import3_* — импорт и парсинг XML
+4. Import4_* — импорт JSON
+5. Import5_* — генерация данных через Mockaroo и AI
+
+Все скрипты готовы к использованию в SQL Server Management Studio.
